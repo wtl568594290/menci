@@ -184,5 +184,126 @@ for i = 1, #pinTable do
 end
 
 --welcome
-VERSION = 1.00
+VERSION = 1.01
 print("menci version = " .. VERSION)
+---update lua version
+do
+    --config
+    pinUpdate_G = 3
+    interAction = "down"
+    gpio.mode(pinUpdate_G, gpio.INPUT)
+    UPDATE_HOST = "http://www.alzhihuiyanglao.com/lua/updateLua?type=menci&version=" .. VERSION
+    size_G = 0
+    --led blink
+    local function ledBlink()
+        local array = {200 * 1000, 200 * 1000}
+        gpio.serout(pinLed_G, gpio.LOW, array, 10, ledBlink)
+    end
+
+    --update part
+    function updatePart()
+        if #urls_G > 0 then
+            print("update:" .. urls_G[1])
+            http.get(
+                urls_G[1],
+                nil,
+                function(code, data)
+                    if code == 200 then
+                        if file.open("run.lua", "a+") then
+                            file.write(data)
+                            file.close()
+                            table.remove(urls_G, 1)
+                            updatePart()
+                        else
+                            node.restart()
+                        end
+                    else
+                        node.restart()
+                    end
+                end
+            )
+        else
+            if file.exists("run.lua") then
+                local f = file.stat("run.lua")
+                if f.size == size_G then
+                    print("start rename file")
+                    if file.rename("init.lua", "old.lua") then
+                        if file.rename("run.lua", "init.lua") then
+                            file.remove("old.lua")
+                            print("update success,now restart")
+                            node.restart()
+                        else
+                            file.rename("old.lua", "init.lua")
+                            print("update error,restore init.lua")
+                            node.restart()
+                        end
+                    else
+                        file.remove("run.lua")
+                        print("update error,remove run.lua")
+                    end
+                else
+                    print("file size check fail,remove run.lua")
+                    file.remove("run.lua")
+                end
+                f = nil
+                node.restart()
+            else
+                node.restart()
+            end
+        end
+    end
+    --check update
+    function checkUpdate()
+        print("check update")
+        http.get(
+            UPDATE_HOST,
+            nil,
+            function(code, data)
+                if code == 200 then
+                    ledBlink()
+                    local json = sjson.decode(data)
+                    if json.update == 1 then
+                        size_G = json.size
+                        urls_G = json.urls
+                        json = nil
+                        if file.exists("run.lua") then
+                            file.remove("run.lua")
+                        end
+                        updatePart()
+                    else
+                        node.restart()
+                    end
+                else
+                    gpio.trig(pinUpdate_G, interAction, updatePress)
+                end
+            end
+        )
+    end
+    updateCount_G = 0
+    function updatePress()
+        gpio.trig(pinUpdate_G)
+        tmr.create():alarm(
+            50,
+            tmr.ALARM_AUTO,
+            function(timer)
+                if gpio.read(pinUpdate_G) == gpio.LOW then
+                    updateCount_G = updateCount_G + 1
+                    if updateCount_G == 100 then
+                        timer:unregister()
+                        checkUpdate()
+                    end
+                else
+                    timer:unregister()
+                    gpio.trig(pinUpdate_G, interAction, updatePress)
+                end
+            end
+        )
+    end
+    gpio.trig(pinUpdate_G, interAction, updatePress)
+    if file.exists("old.lua") then
+        file.remove("old.lua")
+    end
+    if file.exists("run.lua") then
+        file.remove("run.lua")
+    end
+end
